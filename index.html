@@ -41,7 +41,14 @@ body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
 .l.rec{animation:rec .5s steps(2,start) infinite}
 @keyframes rec{to{opacity:.15}}
 @media (prefers-reduced-motion:reduce){.l.rec{animation:none;opacity:.35}}
-.kb{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;touch-action:none;-webkit-user-select:none;user-select:none}
+.edt{all:unset;position:absolute;left:50%;transform:translateX(-50%);top:calc(8px + env(safe-area-inset-top,0px));width:28px;height:28px;display:grid;place-items:center;cursor:pointer;z-index:7}
+.edt[hidden]{display:none}
+.edt::before{content:"";width:9px;height:9px;box-sizing:border-box;background:var(--bg);border:1px solid var(--ink)}
+.edt[aria-pressed="true"]::before{background:var(--ink)}
+#ed{position:absolute;inset:0;background:var(--bg);z-index:5;touch-action:none}
+#ed[hidden]{display:none}
+#ed canvas{position:absolute;left:0;top:0;width:100%;height:100%}
+.kb{z-index:6;position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;touch-action:none;-webkit-user-select:none;user-select:none}
 .kb[hidden]{display:none}
 .key{box-sizing:border-box;width:34px;height:44px;border:1px solid var(--ink);margin-left:-1px;background:var(--bg)}
 .key.on{background:var(--ink)}
@@ -58,6 +65,8 @@ body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
     <button class="form" data-form="orbit" aria-pressed="false" aria-label="형식 2: 도는 원이 줄을 지날 때마다 소리"></button>
   </div>
   <div class="prms" id="prms" role="group" aria-label="원의 길" hidden></div>
+  <button class="edt" id="edt" aria-pressed="false" aria-label="원 자리 소리의 파형 다듬기"></button>
+  <div id="ed" hidden aria-label="파형: 양 끝 줄=자르기, 위 동그라미=페이드, 아래 네모=반복 구간"><canvas id="edc"></canvas></div>
   <div class="kb" id="kb" role="group" aria-label="화음 건반: 누르는 동안 원 자리의 소리로 화음이 납니다"></div>
   <div class="opts" role="group" aria-label="섞는 방식">
     <button class="opt" data-mode="1" aria-pressed="true" aria-label="옵션 1: 성질별로 섞기(음높이·목소리 색·크기)"></button>
@@ -275,7 +284,7 @@ function startProc(){
 // ---- the two gestures ----
 const touches=new Map();             // pointerId -> {kind, ...}
 field.addEventListener('pointerdown',e=>{
-  if(e.target.closest('.opt,.form,.prm,.kb')) return;
+  if(e.target.closest('.opt,.form,.prm,.kb,.edt,#ed')) return;
   ac().resume(); askMic();
   const k=letterAt(e.clientX,e.clientY);
   if(k && activeRec){ recStop(activeRec); activeRec.kind='ended'; return; }   // safety: tapping while a recording runs ends it
@@ -333,7 +342,7 @@ function end(e){
 field.addEventListener('pointerup',end); field.addEventListener('pointercancel',end);
 field.addEventListener('contextmenu',e=>e.preventDefault());
 // iPhone/iPad: stop the system's own long-press (text loupe, callout) from cancelling a held touch
-['touchstart','touchmove'].forEach(ev=>field.addEventListener(ev,e=>{ if(!e.target.closest('.opt,.form,.prm')||e.target.closest('.kb')) e.preventDefault(); },{passive:false}));
+['touchstart','touchmove'].forEach(ev=>field.addEventListener(ev,e=>{ if(!e.target.closest('.opt,.form,.prm,.edt')||e.target.closest('.kb')) e.preventDefault(); },{passive:false}));
 // iPhone only lets sound start from the END of a touch (or a click), not from its start: wake the sound there
 function wake(){ const c=ac(); if(c.state!=='running'){ c.resume(); const b=c.createBuffer(1,1,c.sampleRate), s=c.createBufferSource(); s.buffer=b; s.connect(c.destination); s.start(); } }
 addEventListener('touchend',wake,{capture:true}); addEventListener('click',wake,{capture:true});
@@ -445,7 +454,7 @@ function pinTick(){
   const keys=h?[h.l.a,h.l.b]:sh, w=h?[1-h.t,h.t]:sh?weights(sh,pin.x,pin.y):null;
   const key=keys? mode+':'+keys.join('')+':'+keys.filter(k=>own.has(k)).join('') : '';
   pinKey=key;                         // the circle itself is silent: it only chooses the sound the chord keys play
-  if(keys){ const sig=key+':'+w.map(x=>x.toFixed(2)).join(','); if(sig!==kbSig){ kbSig=sig; kbSrc={keys,w:w.slice()}; kbBuf=null; } }
+  if(keys){ const sig=key+':'+w.map(x=>x.toFixed(2)).join(','); if(sig!==kbSig){ kbSig=sig; kbSrc={keys,w:w.slice()}; kbBuf=null; if(window.edDraw) edDraw(); } }
 }
 // ---- form 1 · chord keys: 7 keys, each one a chord that fits; the sound is the blend under the resting circle ----
 // The blend is printed once into a short sound, then played faster/slower like an old sampler (higher = shorter).
@@ -471,12 +480,82 @@ function printBlend(keys,w){                       // the sound under the circle
   for(let h=0;h<hops;h++){ const x=renderHop(v); for(let i=0;i<HOP;i++) o[h*HOP+i]=x[i]*0.5; }
   return out;
 }
+// ---- shaping the sound under the circle by hand, on its waveform (top square) ----
+// All marks are fractions of the printed sound, so they stay put when the circle moves to another blend.
+//   cut   S…E      the part that is kept            (full-height lines; grab them in the middle band)
+//   fade  fi, fo   soft start / soft end            (small circles on top; the slope is drawn over the waveform)
+//   loop  L0…L1    what repeats while a key is held (small squares at the bottom)
+// The level is evened out automatically.
+const ED={S:0,E:1,fi:0.02,fo:0.02,L0:0,L1:1}; let edCache=null;
+function kbPrint(){ if(!kbSrc) return null; if(!kbBuf) kbBuf=printBlend(kbSrc.keys,kbSrc.w); return kbBuf; }
+function trimmed(){
+  const b=kbPrint(); if(!b) return null;
+  const sig=JSON.stringify(ED); if(edCache&&edCache.b===b&&edCache.sig===sig) return edCache;
+  const src=b.getChannelData(0), N=src.length, a=Math.floor(ED.S*N), z=Math.max(a+64,Math.floor(ED.E*N)), n=z-a;
+  const out=ctx.createBuffer(1,n,b.sampleRate), o=out.getChannelData(0); let pk=0;
+  for(let i=0;i<n;i++){ o[i]=src[a+i]; pk=Math.max(pk,Math.abs(o[i])); }
+  const fi=Math.floor(ED.fi*N), fo=Math.floor(ED.fo*N), g=pk>0?0.8/pk:1;
+  for(let i=0;i<n;i++){ let e=1; if(i<fi) e=i/fi; if(n-1-i<fo) e=Math.min(e,(n-1-i)/fo); o[i]*=e*g; }
+  const sr=b.sampleRate, ls=Math.max(0,(ED.L0-ED.S)*N/sr), le=Math.min(n/sr,(ED.L1-ED.S)*N/sr);
+  edCache={b,sig,buf:out,ls,le:le>ls+0.01?le:n/sr}; return edCache;
+}
+(function(){
+  const btn=document.getElementById('edt'), box=document.getElementById('ed'), cv=document.getElementById('edc'), g=cv.getContext('2d');
+  const R=()=>{ const W=innerWidth, H=innerHeight, kb=document.getElementById('kb').getBoundingClientRect();
+    const x0=Math.max(48,W*0.05), x1=W-x0, y0=56, y1=(kb.top>0?kb.top:H)-46; return {x0,x1,y0,y1}; };
+  const X=(f,r)=>r.x0+f*(r.x1-r.x0), F=(x,r)=>Math.max(0,Math.min(1,(x-r.x0)/(r.x1-r.x0)));
+  function draw(){
+    if(box.hidden) return; const d=devicePixelRatio||1, W=innerWidth, H=innerHeight;
+    if(cv.width!==Math.round(W*d)){ cv.width=Math.round(W*d); cv.height=Math.round(H*d); }
+    g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,W,H);
+    const r=R(), mid=(r.y0+r.y1)/2, half=(r.y1-r.y0)/2, ink=getComputedStyle(document.documentElement).getPropertyValue('--ink').trim()||'#000';
+    g.strokeStyle=ink; g.fillStyle=ink; g.lineWidth=1;
+    const b=kbPrint();
+    // waveform: one thin bar per pixel column; outside the cut it is faint
+    if(b){ const a=b.getChannelData(0), N=a.length; let pk=0; for(let i=0;i<N;i+=7) pk=Math.max(pk,Math.abs(a[i])); pk=pk||1;
+      for(let x=Math.floor(r.x0);x<r.x1;x++){ const f=F(x,r), i0=Math.floor(f*N), i1=Math.min(N,Math.floor(F(x+1,r)*N)+1); let lo=0,hi=0;
+        for(let i=i0;i<i1;i++){ const v=a[i]/pk; if(v<lo) lo=v; if(v>hi) hi=v; }
+        g.globalAlpha=(f<ED.S||f>ED.E)?0.2:1; g.fillRect(x,mid-hi*half,1,Math.max(1,(hi-lo)*half)); }
+      g.globalAlpha=1; }
+    else { g.beginPath(); g.moveTo(r.x0,mid+0.5); g.lineTo(r.x1,mid+0.5); g.stroke(); }
+    // cut lines
+    [ED.S,ED.E].forEach(f=>{ const x=Math.round(X(f,r))+0.5; g.beginPath(); g.moveTo(x,r.y0-16); g.lineTo(x,r.y1+16); g.stroke(); });
+    // fade slope and its two circles
+    const xa=X(ED.S,r), xb=X(ED.S+ED.fi,r), xc=X(ED.E-ED.fo,r), xd=X(ED.E,r), top=r.y0-16, bot=r.y1+16;
+    g.beginPath(); g.moveTo(xa,bot); g.lineTo(xb,top); g.lineTo(xc,top); g.lineTo(xd,bot); g.stroke();
+    [xb,xc].forEach(x=>{ g.beginPath(); g.arc(x,top,4.5,0,Math.PI*2); g.fill(); });
+    // loop: two squares at the bottom joined by a line
+    const l0=X(ED.L0,r), l1=X(ED.L1,r), ly=bot+14;
+    g.beginPath(); g.moveTo(l0,ly+0.5); g.lineTo(l1,ly+0.5); g.stroke();
+    [l0,l1].forEach(x=>g.fillRect(Math.round(x)-4,ly-4,9,9));
+  }
+  let grab=null;
+  box.addEventListener('pointerdown',e=>{ const r=R(), x=e.clientX, y=e.clientY, top=r.y0-16, bot=r.y1+16, ly=bot+14;
+    const near=(f,px)=>Math.abs(X(f,r)-px);
+    if(y<top+24){ grab = near(ED.S+ED.fi,x)<=near(ED.E-ED.fo,x) ? 'fi':'fo'; }
+    else if(y>bot-4){ grab = near(ED.L0,x)<=near(ED.L1,x) ? 'L0':'L1'; }
+    else { grab = near(ED.S,x)<=near(ED.E,x) ? 'S':'E'; }
+    box.setPointerCapture(e.pointerId); move(e); e.preventDefault(); });
+  function move(e){ if(!grab) return; const f=F(e.clientX,R()), m=0.01;
+    if(grab==='S'){ ED.S=Math.min(f,ED.E-m); ED.L0=Math.max(ED.L0,ED.S); }
+    if(grab==='E'){ ED.E=Math.max(f,ED.S+m); ED.L1=Math.min(ED.L1,ED.E); }
+    if(grab==='fi') ED.fi=Math.max(0,Math.min(f-ED.S,ED.E-ED.S-ED.fo));
+    if(grab==='fo') ED.fo=Math.max(0,Math.min(ED.E-f,ED.E-ED.S-ED.fi));
+    if(grab==='L0') ED.L0=Math.max(ED.S,Math.min(f,ED.L1-m));
+    if(grab==='L1') ED.L1=Math.min(ED.E,Math.max(f,ED.L0+m));
+    draw(); }
+  box.addEventListener('pointermove',move);
+  ['pointerup','pointercancel'].forEach(ev=>box.addEventListener(ev,()=>{ grab=null; }));
+  box.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
+  btn.addEventListener('click',()=>{ ac(); box.hidden=!box.hidden; btn.setAttribute('aria-pressed',!box.hidden); draw(); });
+  addEventListener('resize',draw); window.edDraw=draw;
+})();
 const held=new Map();                               // pointerId -> {gn, srcs, el}
 function chordOn(id,i,el){
   if(!kbSrc) return; const c=ac(); c.resume();
-  if(!kbBuf) kbBuf=printBlend(kbSrc.keys,kbSrc.w); if(!kbBuf) return;
-  const gn=c.createGain(); gn.gain.value=0; gn.connect(c.destination); gn.gain.setTargetAtTime(0.55,c.currentTime,0.005);
-  const srcs=CHORDS[i].map(st=>{ const s=c.createBufferSource(); s.buffer=kbBuf; s.loop=true; s.playbackRate.value=Math.pow(2,st/12); s.connect(gn); s.start(); return s; });
+  const T=trimmed(); if(!T) return;
+  const gn=c.createGain(); gn.gain.value=0; gn.connect(c.destination); gn.gain.setTargetAtTime(0.33,c.currentTime,0.005);
+  const srcs=CHORDS[i].map(st=>{ const s=c.createBufferSource(); s.buffer=T.buf; s.loop=true; s.loopStart=T.ls; s.loopEnd=T.le; s.playbackRate.value=Math.pow(2,st/12); s.connect(gn); s.start(); return s; });
   held.set(id,{gn,srcs,el}); el.classList.add('on');
 }
 function chordOff(id){ const h=held.get(id); if(!h) return; held.delete(id);
@@ -532,7 +611,7 @@ function tick(now){
   requestAnimationFrame(tick);
 }
 document.querySelectorAll('.form').forEach(b=>b.addEventListener('click',()=>{
-  form=b.dataset.form; ac().resume(); document.getElementById('prms').hidden=form!=='orbit'; document.getElementById('kb').hidden=form!=='touch'; layout();
+  form=b.dataset.form; ac().resume(); document.getElementById('prms').hidden=form!=='orbit'; document.getElementById('kb').hidden=form!=='touch'; const eb=document.getElementById('edt'); eb.hidden=form!=='touch'; if(form!=='touch'){ document.getElementById('ed').hidden=true; eb.setAttribute('aria-pressed',false); } layout();
   document.querySelectorAll('.form').forEach(o=>o.setAttribute('aria-pressed',o===b));
 }));
 requestAnimationFrame(tick);
