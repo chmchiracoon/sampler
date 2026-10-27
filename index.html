@@ -316,6 +316,7 @@ function end(e){
   if(st.kind==='rec') recStop(st);
   if(st.kind==='drag'){ const k=letterAt(e.clientX,e.clientY); if(k&&k!==st.from&&!has(st.from,k)) links.push({a:st.from,b:k}); drag=null; redraw(); }
   if(st.kind==='play'||st.kind==='shape') release(st.v);
+  st.kind='ended';                    // a recording still waiting for the microphone must not start after the finger is gone
 }
 field.addEventListener('pointerup',end); field.addEventListener('pointercancel',end);
 field.addEventListener('contextmenu',e=>e.preventDefault());
@@ -373,7 +374,7 @@ async function recStart(k,st){
   st.letter=k;
   try{
     st.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
-    if(st.kind!=='rec'){ st.stream.getTracks().forEach(x=>x.stop()); return; }       // already let go
+    if(st.kind!=='rec'){ st.stream.getTracks().forEach(x=>x.stop()); el.classList.remove('rec'); return; }   // let go (or the iPhone permission popup took the touch) → hold again to record
     st.chunks=[]; st.mr=new MediaRecorder(st.stream);
     st.mr.ondataavailable=ev=>{ if(ev.data.size) st.chunks.push(ev.data); };
     st.mr.onstop=async()=>{ st.stream.getTracks().forEach(x=>x.stop());
