@@ -699,6 +699,13 @@ document.querySelectorAll('.form').forEach(b=>b.addEventListener('click',()=>{
 requestAnimationFrame(tick);
 
 ac();                                   // decode and analyse right away; the first touch only resumes playback
+// ?debug=1 → a small status line for testing on the phone (not shown otherwise)
+if(new URLSearchParams(location.search).get('debug')){
+  const d=document.createElement('div'); d.style.cssText='position:fixed;left:4px;top:4px;z-index:99;font:10px/1.3 ui-monospace,monospace;color:#000;pointer-events:none;white-space:pre';
+  document.body.appendChild(d); window._errs=[]; addEventListener('error',e=>_errs.push(e.message));
+  const _warn=console.warn; console.warn=(...a)=>{ _errs.push(a.join(' ')); _warn(...a); };
+  setInterval(()=>{ const E=eng(); d.textContent=`mode ${mode} form ${form} ctx ${ctx&&ctx.state} sr ${ctx&&ctx.sampleRate}\nAI ${E?E.name+' ready '+E.ready+' ms '+E.ms.toFixed(1)+' pend '+!!E.pend:'-'}\nkb ${kbBuf?kbBuf.duration.toFixed(2)+'s':'none'} src ${kbSrc?kbSrc.keys.join(''):'-'} held ${held.size}\n${_errs.slice(-3).join('\n')}`; },300);
+}
 
 document.fonts&&document.fonts.ready.then(layout);
 addEventListener('resize',layout); layout();
