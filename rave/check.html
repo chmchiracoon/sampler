@@ -15,12 +15,16 @@ let ctx=null, last=null;
 document.getElementById('go').onclick=async()=>{
   document.getElementById('go').disabled=true;
   ctx=new (window.AudioContext||window.webkitAudioContext)(); ctx.resume();
-  log('모델: '+M+' · 기기: '+navigator.userAgent.replace(/^.*?\(/,'(').slice(0,60));
+  log('저장소: '+(self.caches?'있음':'없음')+' · 모델: '+M+' · 기기: '+navigator.userAgent.replace(/^.*?\(/,'(').slice(0,60));
   const L=await (await fetch(M+'_lat.json')).json();
   const dec=s=>{const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return new Float32Array(u.buffer);};
   const A=dec(L.A.z), D=dec(L.D.z), C=A.length/L.A.F;
   const w=new Worker('worker.js?m='+M); let t0=performance.now();
-  const ask=msg=>new Promise((res,rej)=>{ w.onmessage=e=>{ if(e.data.type==='error') rej(new Error(e.data.msg)); else res(e.data); }; w.postMessage(msg); });
+  const prog=document.createElement('div'); o.appendChild(prog);
+  w.onerror=e=>log('오류(작업자): '+(e.message||'알 수 없음')+' ❌');
+  const ask=msg=>new Promise((res,rej)=>{ w.onmessage=e=>{ const d=e.data;
+      if(d.type==='progress'){ prog.textContent='받는 중 '+d.file+' '+(d.got/1e6).toFixed(1)+(d.total?' / '+(d.total/1e6).toFixed(1):'')+' MB'; return; }
+      if(d.type==='error') rej(new Error(d.msg)); else res(d); }; w.postMessage(msg); });
   try{
     const r=await ask({type:'init'}); log('① 준비 완료 '+((performance.now()-t0)/1000).toFixed(1)+'초 · 0.043초 만드는 데 '+(r.ms/1000).toFixed(3)+'초');
     for(const F of [16,96]){

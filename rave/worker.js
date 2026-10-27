@@ -13,7 +13,16 @@ const CACHE = 'rave-2026-10-27a';
 async function bytes(url) {
   let c = null; try { c = await caches.open(CACHE); const hit = await c.match(url); if (hit) return new Uint8Array(await hit.arrayBuffer()); } catch (e) {}
   const r = await fetch(url); if (!r.ok) throw new Error(url + ' ' + r.status);
-  const b = await r.arrayBuffer();
+  // read in pieces so the page can show how far the download is
+  const total = +r.headers.get('content-length') || 0, parts = []; let got = 0, lastT = 0;
+  const rd = r.body && r.body.getReader ? r.body.getReader() : null;
+  let b;
+  if (rd) {
+    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length;
+      const now = Date.now(); if (now - lastT > 300) { lastT = now; postMessage({ type: 'progress', file: url, got, total }); } }
+    const u = new Uint8Array(got); let o = 0; for (const p of parts) { u.set(p, o); o += p.length; } b = u.buffer;
+  } else b = await r.arrayBuffer();
+  postMessage({ type: 'progress', file: url, got: b.byteLength, total: b.byteLength });
   if (c) { try { await c.put(url, new Response(b.slice(0))); } catch (e) {} }
   return new Uint8Array(b);
 }
@@ -21,7 +30,7 @@ async function session(url) { return ort.InferenceSession.create(await bytes(url
 let wasmReady = null;
 function prepWasm() { return wasmReady || (wasmReady = bytes('ort-wasm-simd-threaded.wasm').then(b => { ort.env.wasm.wasmBinary = b.buffer; })); }
 // clear older versions
-caches.keys().then(ks => ks.filter(k => k.startsWith('rave-') && k !== CACHE).forEach(k => caches.delete(k))).catch(() => {});
+if (self.caches) caches.keys().then(ks => ks.filter(k => k.startsWith('rave-') && k !== CACHE).forEach(k => caches.delete(k))).catch(() => {});
 let dec = null, pri = null, enc = null, meta = null, init = null, live = null;
 const C = () => meta.crop, X = () => meta.L - meta.crop;
 const fresh = () => ({ d: init.d.map((x, i) => new ort.Tensor('float32', x.slice(), meta.dec[i])),
