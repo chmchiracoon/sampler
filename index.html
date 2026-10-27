@@ -41,6 +41,10 @@ body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
 .l.rec{animation:rec .5s steps(2,start) infinite}
 @keyframes rec{to{opacity:.15}}
 @media (prefers-reduced-motion:reduce){.l.rec{animation:none;opacity:.35}}
+.kb{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(44px + env(safe-area-inset-bottom,0px));display:flex;touch-action:none;-webkit-user-select:none;user-select:none}
+.kb[hidden]{display:none}
+.key{box-sizing:border-box;width:34px;height:44px;border:1px solid var(--ink);margin-left:-1px;background:var(--bg)}
+.key.on{background:var(--ink)}
 .l{position:absolute;font:800 32px/1 var(--letter);font-variation-settings:"ROND" 0;color:var(--ink);pointer-events:none}
 </style>
 
@@ -54,6 +58,7 @@ body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
     <button class="form" data-form="orbit" aria-pressed="false" aria-label="형식 2: 도는 원이 줄을 지날 때마다 소리"></button>
   </div>
   <div class="prms" id="prms" role="group" aria-label="원의 길" hidden></div>
+  <div class="kb" id="kb" role="group" aria-label="화음 건반: 누르는 동안 원 자리의 소리로 화음이 납니다"></div>
   <div class="opts" role="group" aria-label="섞는 방식">
     <button class="opt" data-mode="1" aria-pressed="true" aria-label="옵션 1: 성질별로 섞기(음높이·목소리 색·크기)"></button>
     <button class="opt" data-mode="2" aria-pressed="false" aria-label="옵션 2: AI가 배운 공간에서 섞기"></button>
@@ -74,7 +79,8 @@ function layout(){
   const sl=parseFloat(getComputedStyle(document.documentElement).paddingLeft)||0;
   const padX=Math.max(48,W*0.05), padY=Math.max(36,H*0.07);
   orbit={cx:W/2, cy:H/2, rx:(W/2-padX)*1.12, ry:(H/2-padY)*1.12};
-  const xs={L:padX, R:W-padX}, ys={T:padY, B:H-padY};
+  const kbOn=typeof form!=='undefined'&&form==='touch';
+  const xs={L:padX, R:W-padX}, ys={T:padY, B:H-padY-(kbOn?60:0)};
   const at={A:[xs.L,ys.T],B:[xs.R,ys.T],C:[xs.L,ys.B],D:[xs.R,ys.B]};
   KEYS.forEach(k=>{const el=document.getElementById(k), r=el.getBoundingClientRect();
     pos[k]={x:at[k][0],y:at[k][1]}; el.style.left=(at[k][0]-r.width/2)+'px'; el.style.top=(at[k][1]-r.height/2)+'px';});
@@ -269,7 +275,7 @@ function startProc(){
 // ---- the two gestures ----
 const touches=new Map();             // pointerId -> {kind, ...}
 field.addEventListener('pointerdown',e=>{
-  if(e.target.closest('.opt,.form,.prm')) return;
+  if(e.target.closest('.opt,.form,.prm,.kb')) return;
   ac().resume(); askMic();
   const k=letterAt(e.clientX,e.clientY);
   if(k && activeRec){ recStop(activeRec); activeRec.kind='ended'; return; }   // safety: tapping while a recording runs ends it
@@ -327,7 +333,7 @@ function end(e){
 field.addEventListener('pointerup',end); field.addEventListener('pointercancel',end);
 field.addEventListener('contextmenu',e=>e.preventDefault());
 // iPhone/iPad: stop the system's own long-press (text loupe, callout) from cancelling a held touch
-['touchstart','touchmove'].forEach(ev=>field.addEventListener(ev,e=>{ if(!e.target.closest('.opt,.form,.prm')) e.preventDefault(); },{passive:false}));
+['touchstart','touchmove'].forEach(ev=>field.addEventListener(ev,e=>{ if(!e.target.closest('.opt,.form,.prm')||e.target.closest('.kb')) e.preventDefault(); },{passive:false}));
 field.addEventListener('touchend',()=>{ setTimeout(()=>{},0); if(pendingPick){ pendingPick=false; document.getElementById('pick').click(); } });
 // ---- option 2 · blend inside a space learned by an AI ----
 // Off-line, an AI sound codec (Descript Audio Codec) turned each sound into a path through its learned space.
@@ -438,7 +444,51 @@ function pinTick(){
   const key=keys? mode+':'+keys.join('')+':'+keys.filter(k=>own.has(k)).join('') : '';
   if(key!==pinKey){ if(pinV) release(pinV); pinV=keys?voice(keys,w):null; pinKey=key; }
   else if(pinV) setMix(pinV,w);
+  if(keys){ const sig=key+':'+w.map(x=>x.toFixed(2)).join(','); if(sig!==kbSig){ kbSig=sig; kbSrc={keys,w:w.slice()}; kbBuf=null; } }
 }
+// ---- form 1 · chord keys: 7 keys, each one a chord that fits; the sound is the blend under the resting circle ----
+// The blend is printed once into a short sound, then played faster/slower like an old sampler (higher = shorter).
+// The sound's own pitch is "home" (key 1). Keys follow the major scale; each plays its 3-note chord while held.
+const SCALE=[0,2,4,5,7,9,11];
+const CHORDS=SCALE.map((r,i)=>{ const n=[0,2,4].map(d=>SCALE[(i+d)%7]+((i+d)>=7?12:0)); return r>=7?n.map(x=>x-12):n; });
+let kbSig='', kbSrc=null, kbBuf=null;
+function printBlend(keys,w){                       // the sound under the circle, as one loop
+  const c=ac();
+  if(mode===2 && !usesOwn(keys) && typeof AI!=='undefined'){
+    const full=[0,0,0,0]; keys.forEach((k,i)=>full[KEYS.indexOf(k)]=w[i]*GRID);
+    const pts=gridPoints(keys), d=pts.map(p=>Math.hypot(...p.map((q,i)=>q-full[i])));
+    const order=d.map((x,i)=>i).sort((a,b)=>d[a]-d[b]).slice(0,3); let sum=0; const g=order.map(i=>{const x=1/Math.pow(d[i]+0.05,2); sum+=x; return x;});
+    const bs=order.map(i=>aiBufs[pts[i].join('')]); if(bs.some(b=>!b)) return null;
+    const out=c.createBuffer(1,bs[0].length,bs[0].sampleRate), o=out.getChannelData(0);
+    bs.forEach((b,j)=>{ const a=b.getChannelData(0), gn=Math.sqrt(g[j]/sum); for(let i=0;i<o.length&&i<a.length;i++) o[i]+=a[i]*gn; });
+    return out;
+  }
+  const S=keys.map(k=>specs[k]); if(S.some(x=>!x)) return null;
+  let lD=0; keys.forEach((k,i)=>lD+=w[i]*Math.log(S[i].F)); const hops=Math.ceil(Math.exp(lD))+4;
+  const v={keys,w:w.slice(),tw:w.slice(),phi:0,phase:new Float32Array(HB).map(()=>Math.random()*TWO_PI),ola:new Float32Array(FN)};
+  const out=c.createBuffer(1,hops*HOP,S[0].sr), o=out.getChannelData(0);
+  for(let h=0;h<hops;h++){ const x=renderHop(v); for(let i=0;i<HOP;i++) o[h*HOP+i]=x[i]*0.5; }
+  return out;
+}
+const held=new Map();                               // pointerId -> {gn, srcs, el}
+function chordOn(id,i,el){
+  if(!kbSrc) return; const c=ac(); c.resume();
+  if(!kbBuf) kbBuf=printBlend(kbSrc.keys,kbSrc.w); if(!kbBuf) return;
+  const gn=c.createGain(); gn.gain.value=0; gn.connect(c.destination); gn.gain.setTargetAtTime(0.55,c.currentTime,0.005);
+  const srcs=CHORDS[i].map(st=>{ const s=c.createBufferSource(); s.buffer=kbBuf; s.loop=true; s.playbackRate.value=Math.pow(2,st/12); s.connect(gn); s.start(); return s; });
+  held.set(id,{gn,srcs,el}); el.classList.add('on');
+}
+function chordOff(id){ const h=held.get(id); if(!h) return; held.delete(id);
+  const t=ctx.currentTime; h.gn.gain.setTargetAtTime(0,t,0.03); h.srcs.forEach(s=>s.stop(t+0.3));
+  if(![...held.values()].some(x=>x.el===h.el)) h.el.classList.remove('on'); }
+(function(){
+  const kb=document.getElementById('kb');
+  CHORDS.forEach((_,i)=>{ const k=document.createElement('div'); k.className='key'; k.setAttribute('role','button'); k.setAttribute('aria-label',`화음 ${i+1}`); kb.appendChild(k);
+    k.addEventListener('pointerdown',e=>{ e.preventDefault(); e.stopPropagation(); k.releasePointerCapture&&k.releasePointerCapture(e.pointerId); chordOn(e.pointerId,i,k); });
+    k.addEventListener('pointerleave',e=>chordOff(e.pointerId)); });
+  ['pointerup','pointercancel'].forEach(ev=>addEventListener(ev,e=>chordOff(e.pointerId)));
+  kb.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
+})();
 // ---- form 2 · a small circle goes round; each time it crosses a line, the blend at that point sounds once ----
 let orbit={cx:0,cy:0,rx:1,ry:1}, form='touch', dotEl=null, ang=-Math.PI/2, lastT=0, prevP=null;
 const HIT=0.45;                                            // each hit lasts 0.45 s
@@ -481,7 +531,7 @@ function tick(now){
   requestAnimationFrame(tick);
 }
 document.querySelectorAll('.form').forEach(b=>b.addEventListener('click',()=>{
-  form=b.dataset.form; ac().resume(); document.getElementById('prms').hidden=form!=='orbit';
+  form=b.dataset.form; ac().resume(); document.getElementById('prms').hidden=form!=='orbit'; document.getElementById('kb').hidden=form!=='touch'; layout();
   document.querySelectorAll('.form').forEach(o=>o.setAttribute('aria-pressed',o===b));
 }));
 requestAnimationFrame(tick);
