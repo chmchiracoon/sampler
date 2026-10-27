@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 점검</title>
+<style>body{margin:0;padding:20px 16px;background:#d9d9d9;color:#000;font:15px/1.6 ui-monospace,Menlo,monospace}button{font:inherit;padding:10px 14px;border:1px solid #000;background:#d9d9d9;color:#000}</style>
+</head><body>
+<p>AI 점검 페이지 — 결과 화면을 캡처해서 보내 주세요.</p>
+<button id="go">점검 시작</button>
+<div id="o"></div>
+<script>
+// Checks, on this device, the same steps the sampler uses: load the AI in a worker, make a short piece and a full loop,
+// look for broken numbers (NaN), and play the result.
+const M=new URLSearchParams(location.search).get('m')||'voice';
+const o=document.getElementById('o'), log=s=>{o.innerHTML+='<br>'+s;};
+let ctx=null, last=null;
+document.getElementById('go').onclick=async()=>{
+  document.getElementById('go').disabled=true;
+  ctx=new (window.AudioContext||window.webkitAudioContext)(); ctx.resume();
+  log('모델: '+M+' · 기기: '+navigator.userAgent.replace(/^.*?\(/,'(').slice(0,60));
+  const L=await (await fetch(M+'_lat.json')).json();
+  const dec=s=>{const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return new Float32Array(u.buffer);};
+  const A=dec(L.A.z), D=dec(L.D.z), C=A.length/L.A.F;
+  const w=new Worker('worker.js?m='+M); let t0=performance.now();
+  const ask=msg=>new Promise((res,rej)=>{ w.onmessage=e=>{ if(e.data.type==='error') rej(new Error(e.data.msg)); else res(e.data); }; w.postMessage(msg); });
+  try{
+    const r=await ask({type:'init'}); log('① 준비 완료 '+((performance.now()-t0)/1000).toFixed(1)+'초 · 0.043초 만드는 데 '+(r.ms/1000).toFixed(3)+'초');
+    for(const F of [16,96]){
+      const z=new Float32Array(C*F); for(let t=0;t<F;t++) for(let c=0;c<C;c++){ const a=Math.min(L.A.F-1,Math.floor(t/F*L.A.F)), d=Math.min(L.D.F-1,Math.floor(t/F*L.D.F)); z[t*C+c]=0.7*A[a*C+c]+0.3*D[d*C+c]; }
+      t0=performance.now(); const g=await ask({type:'render',z,F});
+      let nan=0,pk=0; for(const x of g.pcm){ if(isNaN(x)) nan++; else pk=Math.max(pk,Math.abs(x)); }
+      log(`② 소리 ${(F*2048/48000).toFixed(1)}초 만들기: ${((performance.now()-t0)/1000).toFixed(1)}초 · 깨진 숫자 ${nan}개 · 최대 크기 ${pk.toFixed(4)} ${nan?'❌':'✅'}`);
+      last=g.pcm;
+    }
+    const s=new Float32Array(C*8); const g2=await ask({type:'dec',z:s,T:8}); let n2=0; for(const x of g2.pcm) if(isNaN(x)) n2++;
+    log('③ 실시간 조각: 깨진 숫자 '+n2+'개 '+(n2?'❌':'✅'));
+    log('<br><button id="play">④ 만든 소리 들어 보기</button>');
+    document.getElementById('play').onclick=()=>{ let pk=0; for(const x of last) if(!isNaN(x)) pk=Math.max(pk,Math.abs(x));
+      const b=ctx.createBuffer(1,last.length,48000), d=b.getChannelData(0); for(let i=0;i<last.length;i++) d[i]=(isNaN(last[i])?0:last[i])*(0.8/(pk||1));
+      const src=ctx.createBufferSource(); src.buffer=b; src.connect(ctx.destination); ctx.resume(); src.start(); log('재생 중… (소리가 들리면 ✅)'); };
+  }catch(e){ log('오류: '+e.message+' ❌'); }
+};
+</script>
+</body></html>
