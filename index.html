@@ -269,8 +269,10 @@ function startProc(){
 const touches=new Map();             // pointerId -> {kind, ...}
 field.addEventListener('pointerdown',e=>{
   if(e.target.closest('.opt,.form,.prm')) return;
-  ac().resume(); field.setPointerCapture(e.pointerId);
+  ac().resume(); askMic();
   const k=letterAt(e.clientX,e.clientY);
+  if(k && activeRec){ recStop(activeRec); activeRec.kind='ended'; return; }   // safety: tapping while a recording runs ends it
+  field.setPointerCapture(e.pointerId);
   if(k){                              // ① hold a letter, then drag a line to another letter
     // hold, then move → draw a line · hold still a little longer → record into this letter while pressed
     const st={kind:'hold',from:k,x0:e.clientX,y0:e.clientY,ptype:e.pointerType};
@@ -368,7 +370,10 @@ const usesOwn=keys=>keys.some(k=>own.has(k));
 
 // ---- putting your own sound into a letter: hold the letter still, it blinks, sound goes in while you press ----
 // Uses the microphone where the page is allowed to; otherwise, on release, the device's own sound-file picker opens.
-const own=new Set(), MAX_REC=12; let pendingPick=false;
+const own=new Set(), MAX_REC=12; let pendingPick=false, activeRec=null, micAsked=false;
+// iPhone asks for the microphone with a popup that steals the finger; ask once on the first touch instead of in the middle of a hold
+function askMic(){ if(micAsked||!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) return; micAsked=true;
+  navigator.mediaDevices.getUserMedia({audio:true}).then(s=>s.getTracks().forEach(x=>x.stop())).catch(()=>{}); }
 async function recStart(k,st){
   const el=document.getElementById(k); el.classList.add('rec'); if(navigator.vibrate) navigator.vibrate([10,40,10]);
   st.letter=k;
@@ -379,11 +384,11 @@ async function recStart(k,st){
     st.mr.ondataavailable=ev=>{ if(ev.data.size) st.chunks.push(ev.data); };
     st.mr.onstop=async()=>{ st.stream.getTracks().forEach(x=>x.stop());
       try{ const ab=await new Blob(st.chunks).arrayBuffer(); useSound(k,await ctx.decodeAudioData(ab)); }catch(e){ console.warn('recording unreadable',e); } };
-    st.mr.start(); st.limit=setTimeout(()=>{ if(st.mr&&st.mr.state==='recording') st.mr.stop(); el.classList.remove('rec'); },MAX_REC*1000);
+    st.mr.start(); activeRec=st; st.limit=setTimeout(()=>{ if(st.mr&&st.mr.state==='recording') st.mr.stop(); el.classList.remove('rec'); activeRec=null; },MAX_REC*1000);
   }catch(e){ st.noMic=true; }                                                          // microphone not available here
 }
 function recStop(st){
-  const k=st.letter; document.getElementById(k).classList.remove('rec'); clearTimeout(st.limit);
+  const k=st.letter; document.getElementById(k).classList.remove('rec'); clearTimeout(st.limit); if(activeRec===st) activeRec=null;
   if(st.mr&&st.mr.state==='recording') st.mr.stop();
   else if(st.noMic){ const pk=document.getElementById('pick'); pk.dataset.k=k;                // fall back to choosing a file
     if(st.ptype==='touch') pendingPick=true; else pk.click(); }                                  // iPhone opens pickers only from touchend
