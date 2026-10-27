@@ -531,7 +531,7 @@ function r3Render(keys,w){                             // chord keys: the AI mak
 const pin={x:innerWidth/2,y:innerHeight/2}; let pinEl=null, pinV=null, pinKey='';
 function pinTick(){
   if(form!=='touch'){ if(pinV){ release(pinV); pinV=null; pinKey=''; } if(pinEl&&pinEl.isConnected) pinEl.remove(); return; }
-  if(!pinEl){ pinEl=document.createElementNS(NS,'circle'); pinEl.id='pin'; pinEl.setAttribute('r',4.5); pinEl.style.fill='var(--ink)'; }
+  if(!pinEl){ pinEl=document.createElementNS(NS,'circle'); pinEl.id='pin'; pinEl.setAttribute('r',9); pinEl.style.fill='var(--ink)'; }
   if(!pinEl.isConnected) svg.appendChild(pinEl);
   pinEl.setAttribute('cx',pin.x); pinEl.setAttribute('cy',pin.y);
   const mx=mixAt(pin.x,pin.y), keys=mx.keys, w=mx.w;
@@ -684,7 +684,7 @@ function tick(now){
   if(form==='orbit'){
     const dt=lastT?Math.min(0.1,(now-lastT)/1000):0; lastT=now;
     ang+=dt*Math.PI*2/turnSec(); const p=dotPos(ang);
-    if(!dotEl){ dotEl=document.createElementNS(NS,'circle'); dotEl.id='dot'; dotEl.setAttribute('r',4.5); }
+    if(!dotEl){ dotEl=document.createElementNS(NS,'circle'); dotEl.id='dot'; dotEl.setAttribute('r',9); }
     if(!dotEl.isConnected) svg.appendChild(dotEl);
     dotEl.setAttribute('cx',p.x); dotEl.setAttribute('cy',p.y);
     if(prevP) links.forEach(l=>{ const [a,b]=ends(l.a,l.b);
