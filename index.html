@@ -476,7 +476,9 @@ function r3Load(E){
       else if(p.rest){ E.pend={sig:p.sig,rest:null}; E.w.postMessage({type:'render',z:p.rest.z,F:p.rest.F}); }   // now the whole loop
       else r3Square(E,false); }
     else if(m.type==='enc'){ E.Z[m.k]={F:m.F,z:m.z}; E.C=m.z.length/m.F; if(mode===E.md) kbSig=''; }
-    else if(m.type==='error'){ console.warn(E.name+' AI',m.msg); E.busy=0; E.pend=null; r3Square(E,false); }
+    else if(m.type==='error'){ console.warn(E.name+' AI',m.msg); E.busy=0; E.pend=null; r3Square(E,false);
+      if(!E.ready){                                    // could not load (e.g. the phone network dropped): go back to option 1; tapping the square again retries
+        E.w.terminate(); E.w=null; if(mode===E.md){ const b1=document.querySelector('.opt[data-mode="1"]'); if(b1) b1.click(); } } }
   };
   E.w.postMessage({type:'init'});
   E.out=ctx.createDynamicsCompressor(); E.out.threshold.value=-12; E.out.ratio.value=8; E.out.connect(ctx.destination);

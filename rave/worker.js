@@ -12,23 +12,35 @@ const M = new URLSearchParams(self.location.search).get('m') || 'water';
 const CACHE = 'rave-2026-10-27a';
 async function bytes(url) {
   let c = null; try { c = await caches.open(CACHE); const hit = await c.match(url); if (hit) return new Uint8Array(await hit.arrayBuffer()); } catch (e) {}
-  const r = await fetch(url); if (!r.ok) throw new Error(url + ' ' + r.status);
-  // read in pieces so the page can show how far the download is
-  const total = +r.headers.get('content-length') || 0, parts = []; let got = 0, lastT = 0;
-  const rd = r.body && r.body.getReader ? r.body.getReader() : null;
-  let b;
-  if (rd) {
-    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length;
-      const now = Date.now(); if (now - lastT > 300) { lastT = now; postMessage({ type: 'progress', file: url, got, total }); } }
-    const u = new Uint8Array(got); let o = 0; for (const p of parts) { u.set(p, o); o += p.length; } b = u.buffer;
-  } else b = await r.arrayBuffer();
-  postMessage({ type: 'progress', file: url, got: b.byteLength, total: b.byteLength });
-  if (c) { try { await c.put(url, new Response(b.slice(0))); } catch (e) {} }
-  return new Uint8Array(b);
+  // Download in pieces (so the page can show progress). On a phone network the connection can drop, or the browser
+  // can pause when another app comes to the front: then carry on from where it stopped (up to 8 tries).
+  const parts = []; let got = 0, total = 0, lastT = 0, tries = 0;
+  for (;;) {
+    try {
+      const r = await fetch(url, got ? { headers: { Range: 'bytes=' + got + '-' } } : {});
+      if (!r.ok) throw new Error(url + ' ' + r.status);
+      if (got && r.status !== 206) { parts.length = 0; got = 0; }              // server ignored the resume: start over
+      if (!total) total = +r.headers.get('content-length') || 0;
+      if (!r.body || !r.body.getReader) { const a = new Uint8Array(await r.arrayBuffer()); parts.push(a); got += a.length; }
+      else { const rd = r.body.getReader();
+        for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); got += value.length;
+          const now = Date.now(); if (now - lastT > 300) { lastT = now; postMessage({ type: 'progress', file: url, got, total }); } } }
+      if (total && got < total) throw new Error('short');
+      break;
+    } catch (e) {
+      if (++tries > 8) throw new Error(url + ': ' + (e && e.message || e));
+      postMessage({ type: 'progress', file: url, got, total, retry: tries });
+      await new Promise(r => setTimeout(r, 1500 * tries));
+    }
+  }
+  const u = new Uint8Array(got); let o = 0; for (const p of parts) { u.set(p, o); o += p.length; }
+  postMessage({ type: 'progress', file: url, got, total: got });
+  if (c) { try { await c.put(url, new Response(u.slice(0))); } catch (e) {} }
+  return u;
 }
 async function session(url) { return ort.InferenceSession.create(await bytes(url), { executionProviders: ['wasm'] }); }
 let wasmReady = null;
-function prepWasm() { return wasmReady || (wasmReady = bytes('ort-wasm-simd-threaded.wasm').then(b => { ort.env.wasm.wasmBinary = b.buffer; })); }
+function prepWasm() { return wasmReady || (wasmReady = bytes('ort-wasm-simd-threaded.wasm').then(b => { ort.env.wasm.wasmBinary = b.buffer; }, e => { wasmReady = null; throw e; })); }
 // clear older versions
 if (self.caches) caches.keys().then(ks => ks.filter(k => k.startsWith('rave-') && k !== CACHE).forEach(k => caches.delete(k))).catch(() => {});
 let dec = null, pri = null, enc = null, meta = null, init = null, live = null;
