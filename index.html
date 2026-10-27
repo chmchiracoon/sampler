@@ -54,7 +54,7 @@ body{margin:0;background:var(--bg);color:var(--ink);overflow:hidden;
   <span class="l" id="C">C</span><span class="l" id="D">D</span>
   <input type="file" id="pick" accept="audio/*" hidden>
   <div class="forms" role="group" aria-label="연주 형식">
-    <button class="form" data-form="touch" aria-pressed="true" aria-label="형식 1: 놓아둔 원이 있는 자리의 소리가 계속 남"></button>
+    <button class="form" data-form="touch" aria-pressed="true" aria-label="형식 1: 원을 놓아 소리를 고르고, 건반으로 화음을 침"></button>
     <button class="form" data-form="orbit" aria-pressed="false" aria-label="형식 2: 도는 원이 줄을 지날 때마다 소리"></button>
   </div>
   <div class="prms" id="prms" role="group" aria-label="원의 길" hidden></div>
@@ -442,8 +442,7 @@ function pinTick(){
   const h=linkAt(pin.x,pin.y), sh=h?null:shapeAt(pin.x,pin.y);
   const keys=h?[h.l.a,h.l.b]:sh, w=h?[1-h.t,h.t]:sh?weights(sh,pin.x,pin.y):null;
   const key=keys? mode+':'+keys.join('')+':'+keys.filter(k=>own.has(k)).join('') : '';
-  if(key!==pinKey){ if(pinV) release(pinV); pinV=keys?voice(keys,w):null; pinKey=key; }
-  else if(pinV) setMix(pinV,w);
+  pinKey=key;                         // the circle itself is silent: it only chooses the sound the chord keys play
   if(keys){ const sig=key+':'+w.map(x=>x.toFixed(2)).join(','); if(sig!==kbSig){ kbSig=sig; kbSrc={keys,w:w.slice()}; kbBuf=null; } }
 }
 // ---- form 1 · chord keys: 7 keys, each one a chord that fits; the sound is the blend under the resting circle ----
