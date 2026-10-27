@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>물소리 AI 속도 시험</title>
+<script src="coi-serviceworker.min.js"></script>
+<style>
+body{margin:0;padding:24px 16px;background:#d9d9d9;color:#000;font:15px/1.6 ui-monospace,Menlo,monospace}
+a{color:#000}
+.big{font-size:20px;font-weight:700}
+</style></head><body>
+<div id="o">물소리 AI 불러오는 중… (60MB, 와이파이에서 30초~1분)</div>
+<p id="links"></p>
+<script src="ort.min.js"></script>
+<script>
+// Speed test: how long the water-sound AI (RAVE decoder) takes to make 42.7 ms of sound on this device.
+const o=document.getElementById('o'), log=(s,c)=>{ o.innerHTML+='<br>'+(c?'<span class="big">'+s+'</span>':s); };
+const q=new URLSearchParams(location.search), TH=+(q.get('th')||1), GPU=q.get('gpu')==='1';
+document.getElementById('links').innerHTML='다른 방식도 시험: <a href="?th=1">1줄</a> · <a href="?th=4">4줄</a> · <a href="?gpu=1">GPU</a>';
+(async()=>{
+  ort.env.wasm.numThreads=TH; ort.env.wasm.wasmPaths='./';
+  log('방식: '+(GPU?'GPU':('CPU '+TH+'줄'))+' · 격리 '+self.crossOriginIsolated+' · 코어 '+navigator.hardwareConcurrency);
+  if(GPU && !navigator.gpu){ log('이 브라우저는 GPU 방식을 지원하지 않아요',1); return; }
+  const t0=performance.now();
+  const s=await ort.InferenceSession.create('water_dec.onnx',{executionProviders:[GPU?'webgpu':'wasm']});
+  log('불러오기 '+((performance.now()-t0)/1000).toFixed(1)+'초');
+  const shapes=await (await fetch('state.json')).json(), buf=new Float32Array(await (await fetch('state.bin')).arrayBuffer());
+  let off=0; const st0=shapes.map(sh=>{const n=sh.reduce((a,b)=>a*b,1); const t=buf.slice(off,off+n); off+=n; return [t,sh];});
+  const res=[];
+  for(const T of [4,8]){
+    const feeds={z:new ort.Tensor('float32',new Float32Array(16*T).map(()=>Math.random()-0.5),[1,16,T]),
+                 extra:new ort.Tensor('float32',new Float32Array(112*T),[1,112,T]),
+                 rnd:new ort.Tensor('float32',new Float32Array(2*T*16*64).map(()=>Math.random()*2-1),[1,2*T,16,64])};
+    st0.forEach(([d,sh],i)=>feeds['s'+i]=new ort.Tensor('float32',d,sh));
+    for(let i=0;i<2;i++) await s.run(feeds);
+    const N=8, a=performance.now(); for(let i=0;i<N;i++){ const r=await s.run(feeds); st0.forEach((_,j)=>feeds['s'+j]=r['o'+j]); }
+    const ms=(performance.now()-a)/N/T; res.push([T,ms]);
+    log(`묶음 ${T}: 0.0427초 소리를 만드는 데 ${(ms/1000).toFixed(4)}초 → ${ms<42.7?'✅ 실시간 가능 ('+(42.7/ms).toFixed(1)+'배 여유)':'❌ 느림 ('+(ms/42.7).toFixed(1)+'배 느림)'}`, 1);
+  }
+  log('<br>이 화면을 캡처해서 보내 주세요.');
+})().catch(e=>log('오류: '+e.message,1));
+</script>
+</body></html>
