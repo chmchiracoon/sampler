@@ -334,6 +334,9 @@ field.addEventListener('pointerup',end); field.addEventListener('pointercancel',
 field.addEventListener('contextmenu',e=>e.preventDefault());
 // iPhone/iPad: stop the system's own long-press (text loupe, callout) from cancelling a held touch
 ['touchstart','touchmove'].forEach(ev=>field.addEventListener(ev,e=>{ if(!e.target.closest('.opt,.form,.prm')||e.target.closest('.kb')) e.preventDefault(); },{passive:false}));
+// iPhone only lets sound start from the END of a touch (or a click), not from its start: wake the sound there
+function wake(){ const c=ac(); if(c.state!=='running'){ c.resume(); const b=c.createBuffer(1,1,c.sampleRate), s=c.createBufferSource(); s.buffer=b; s.connect(c.destination); s.start(); } }
+addEventListener('touchend',wake,{capture:true}); addEventListener('click',wake,{capture:true});
 field.addEventListener('touchend',()=>{ setTimeout(()=>{},0); if(pendingPick){ pendingPick=false; document.getElementById('pick').click(); } });
 // ---- option 2 · blend inside a space learned by an AI ----
 // Off-line, an AI sound codec (Descript Audio Codec) turned each sound into a path through its learned space.
@@ -438,7 +441,6 @@ function pinTick(){
   if(!pinEl){ pinEl=document.createElementNS(NS,'circle'); pinEl.id='pin'; pinEl.setAttribute('r',4.5); pinEl.style.fill='var(--ink)'; }
   if(!pinEl.isConnected) svg.appendChild(pinEl);
   pinEl.setAttribute('cx',pin.x); pinEl.setAttribute('cy',pin.y);
-  if(!ctx||ctx.state!=='running') return;
   const h=linkAt(pin.x,pin.y), sh=h?null:shapeAt(pin.x,pin.y);
   const keys=h?[h.l.a,h.l.b]:sh, w=h?[1-h.t,h.t]:sh?weights(sh,pin.x,pin.y):null;
   const key=keys? mode+':'+keys.join('')+':'+keys.filter(k=>own.has(k)).join('') : '';
